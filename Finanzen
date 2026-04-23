@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>FamilienFinanzen</title>
+
+<!-- PWA -->
+<link rel="manifest" href="data:application/json,{
+   &quot;name&quot;:&quot;FamilienFinanzen&quot;,
+   &quot;short_name&quot;:&quot;Finanzen&quot;,
+   &quot;start_url&quot;:&quot;.&quot;,
+   &quot;display&quot;:&quot;standalone&quot;,
+   &quot;background_color&quot;:&quot;#0b1220&quot;,
+   &quot;theme_color&quot;:&quot;#0b1220&quot;
+}">
+<meta name="theme-color" content="#0b1220">
+
+<!-- Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:Inter, Arial;
+  background:#0b1220;
+  color:#e5e7eb;
+}
+header{
+  padding:14px;
+  text-align:center;
+  background:rgba(255,255,255,.06);
+  backdrop-filter:blur(14px);
+  font-size:20px;
+  font-weight:700;
+}
+.container{max-width:1200px;margin:auto;padding:14px}
+.glass{
+  background:rgba(255,255,255,.08);
+  backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,.15);
+  border-radius:18px;
+  padding:14px;
+  margin-bottom:14px;
+}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tabs button{flex:1}
+input,select,button{
+  width:100%;padding:10px;margin:6px 0;
+  border-radius:10px;
+  background:#0f172a;
+  color:#e5e7eb;
+  border:1px solid #334155;
+}
+button{background:#2563eb;border:none;cursor:pointer}
+.hidden{display:none}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat{font-size:26px;font-weight:700}
+.small{font-size:12px;color:#94a3b8}
+.badge{
+  display:inline-block;
+  padding:6px 10px;
+  background:#1f2937;
+  border-radius:999px;
+  margin:4px;
+  cursor:pointer;
+}
+canvas{background:rgba(255,255,255,.04);border-radius:12px;padding:10px}
+</style>
+</head>
+
+<body>
+<header>FamilienFinanzen 💎</header>
+<div class="container">
+
+<div class="tabs">
+<button onclick="tab('dash')">Dashboard</button>
+<button onclick="tab('tx')">Buchungen</button>
+<button onclick="tab('cat')">Kategorien</button>
+<button onclick="tab('scan')">Rechnungen</button>
+<button onclick="tab('set')">Einstellungen</button>
+</div>
+
+<!-- DASH -->
+<div id="dash" class="glass">
+<div class="grid">
+<div><div class="small">Einnahmen</div><div id="inc" class="stat">0</div></div>
+<div><div class="small">Ausgaben</div><div id="out" class="stat">0</div></div>
+<div><div class="small">Saldo</div><div id="bal" class="stat">0</div></div>
+</div>
+<canvas id="pie"></canvas>
+<canvas id="bar"></canvas>
+<canvas id="line"></canvas>
+</div>
+
+<!-- TX -->
+<div id="tx" class="glass hidden">
+<select id="type">
+<option value="income">Einnahme</option>
+<option value="expense">Ausgabe</option>
+</select>
+<input id="amount" placeholder="Betrag">
+<select id="catSel"></select>
+<input id="note" placeholder="Notiz">
+<button onclick="addTx()">Speichern</button>
+<table><tbody id="list"></tbody></table>
+</div>
+
+<!-- CAT -->
+<div id="cat" class="glass hidden">
+<input id="newCat" placeholder="Neue Kategorie">
+<button onclick="addCat()">Hinzufügen</button>
+<div id="catList"></div>
+</div>
+
+<!-- SCAN -->
+<div id="scan" class="glass hidden">
+<input type="file" id="file">
+<button onclick="scan()">Rechnung scannen</button>
+<div id="scanOut"></div>
+</div>
+
+<!-- SETTINGS -->
+<div id="set" class="glass hidden">
+<button onclick="alert('PWA ist installierbar ✅')">Info</button>
+</div>
+
+</div>
+
+<script>
+// ===== FIREBASE (HIER EINTRAGEN!) =====
+firebase.initializeApp({
+  apiKey: "HIER_API_KEY",
+  authDomain: "HIER.firebaseapp.com",
+  databaseURL: "https://HIER.firebaseio.com",
+  projectId: "HIER"
+});
+let db = firebase.database().ref("familienfinanzen");
+
+// ===== STATE =====
+let data=[], cats=["Allgemein"];
+
+// ===== SYNC =====
+db.on("value", s=>{
+  let v=s.val();
+  if(!v) return;
+  data=v.data||[];
+  cats=v.cats||["Allgemein"];
+  render();
+});
+
+// ===== UI =====
+function tab(t){
+["dash","tx","cat","scan","set"].forEach(x=>document.getElementById(x).classList.add("hidden"));
+document.getElementById(t).classList.remove("hidden");
+}
+function save(){db.set({data,cats});}
+
+// ===== TRANSACTIONS =====
+function addTx(){
+data.push({t:type.value,a:+amount.value,c:catSel.value});
+save();
+}
+function render(){
+let inc=0,out=0,map={},months={};
+data.forEach(x=>{
+if(x.t==="income")inc+=x.a; else out+=x.a;
+map[x.c]=(map[x.c]||0)+x.a;
+});
+inc.innerText=inc;
+out.innerText=out;
+bal.innerText=inc-out;
+catSel.innerHTML=cats.map(c=>`<option>${c}</option>`).join("");
+catList.innerHTML=cats.map(c=>`<span class="badge" onclick="delCat('${c}')">${c} ❌</span>`).join("");
+list.innerHTML=data.map(x=>`<tr><td>${x.t}</td><td>${x.a}</td><td>${x.c}</td></tr>`).join("");
+drawCharts(map);
+}
+
+// ===== CATEGORIES =====
+function addCat(){cats.push(newCat.value);newCat.value="";save();}
+function delCat(c){cats=cats.filter(x=>x!==c);save();}
+
+// ===== CHARTS =====
+let pie,bar,line;
+function drawCharts(map){
+if(pie)pie.destroy();
+pie=new Chart(pieCtx(),{type:"pie",data:{labels:Object.keys(map),datasets:[{data:Object.values(map)}]}});
+}
+function pieCtx(){return document.getElementById("pie");}
+
+// ===== OCR =====
+function scan(){
+let f=file.files[0];
+Tesseract.recognize(f,"deu").then(r=>{
+let t=r.data.text;
+let m=t.match(/([0-9]+,[0-9]{2})/);
+scanOut.innerText=t+(m?"\n💶 Betrag erkannt: "+m[1]:"");
+});
+}
+
+// ===== PWA =====
+if("serviceWorker"in navigator){
+let sw=`self.addEventListener('fetch',e=>e.respondWith(fetch(e.request).catch(()=>new Response('Offline'))))`;
+let blob=new Blob([sw],{type:"text/js"});
+navigator.serviceWorker.register(URL.createObjectURL(blob));
+}
+</script>
+</body>
+</html>
